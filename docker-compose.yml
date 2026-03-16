@@ -1,0 +1,22 @@
+services:
+  web-render-mcp:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - TRANSPORT=http
+      - PORT=3000
+      - FLARESOLVERR_URL=http://flaresolverr:8191
+      - DEBUG=false
+    depends_on:
+      flaresolverr:
+        condition: service_started
+    restart: unless-stopped
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    environment:
+      - LOG_LEVEL=info
+    ports:
+      - "8191:8191"
+    restart: unless-stopped
