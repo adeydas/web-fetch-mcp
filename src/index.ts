@@ -6,6 +6,9 @@ import { z } from "zod";
 import * as cheerio from "cheerio";
 import express, { Request, Response } from "express";
 import { randomUUID } from "crypto";
+import TurndownService from "turndown";
+import { createRequire } from "module";
+const { gfm } = createRequire(import.meta.url)("turndown-plugin-gfm") as { gfm: TurndownService.Plugin };
 
 const FLARESOLVERR_URL = process.env.FLARESOLVERR_URL || "http://localhost:8191";
 const TRANSPORT = process.env.TRANSPORT || "stdio";
@@ -44,33 +47,27 @@ async function flaresolverrFetch(url: string): Promise<{ html: string; finalUrl:
 interface PageContent {
   url: string;
   title: string;
-  content: string;
-  textContent: string;
-  links: Array<{ text: string; href: string }>;
-  images: Array<{ alt: string; src: string }>;
+  markdown: string;
 }
+
+const td = new TurndownService({
+  headingStyle: "atx",
+  hr: "---",
+  bulletListMarker: "-",
+  codeBlockStyle: "fenced"
+});
+td.use(gfm);
 
 function parseHtml(html: string, finalUrl: string): PageContent {
   const $ = cheerio.load(html);
 
   const title = $("title").first().text().trim();
 
-  const links: Array<{ text: string; href: string }> = [];
-  $("a").each((_, el) => {
-    const text = $(el).text().trim();
-    const href = $(el).attr("href") || "";
-    if (text || href) links.push({ text, href });
-  });
-
-  const images: Array<{ alt: string; src: string }> = [];
-  $("img").each((_, el) => {
-    const alt = $(el).attr("alt") || "";
-    const src = $(el).attr("src") || "";
-    if (src) images.push({ alt, src });
-  });
+  // Strip noise before capturing anything
+  $("script, style, noscript, head").remove();
 
   // Try main content areas, fall back to body
-  const mainContent =
+  const mainHtml =
     $("main").html() ||
     $("article").html() ||
     $("[role='main']").html() ||
@@ -79,18 +76,9 @@ function parseHtml(html: string, finalUrl: string): PageContent {
     $("body").html() ||
     "";
 
-  // Strip tags for clean text
-  $("script, style, noscript").remove();
-  const textContent = $("body").text().replace(/\s+/g, " ").trim();
+  const markdown = td.turndown(mainHtml);
 
-  return {
-    url: finalUrl,
-    title,
-    content: mainContent,
-    textContent,
-    links: links.slice(0, 50),
-    images: images.slice(0, 20)
-  };
+  return { url: finalUrl, title, markdown };
 }
 
 // ---------------------------------------------------------------------------
@@ -103,45 +91,21 @@ function createServer(): McpServer {
     version: "1.0.0"
   });
 
-  // Tool: Render a webpage and return content
+  // Tool: Render a webpage and return content as Markdown
   server.tool(
     "render_webpage",
     {
-      url: z.string().url().describe("The URL of the webpage to render"),
-      format: z.enum(["text", "html", "json"]).optional().describe("Output format: 'text' (clean text), 'html' (raw HTML), or 'json' (structured data)")
+      url: z.string().url().describe("The URL of the webpage to render")
     },
-    async ({ url, format = "text" }) => {
+    async ({ url }) => {
       try {
-        log("render_webpage called", { url, format });
+        log("render_webpage called", { url });
         const { html, finalUrl } = await flaresolverrFetch(url);
         const page = parseHtml(html, finalUrl);
 
-        let output: string;
-
-        switch (format) {
-          case "html":
-            output = JSON.stringify({
-              url: page.url,
-              title: page.title,
-              html: page.content
-            }, null, 2);
-            break;
-          case "json":
-            output = JSON.stringify({
-              url: page.url,
-              title: page.title,
-              textContent: page.textContent.substring(0, 10000),
-              links: page.links,
-              images: page.images
-            }, null, 2);
-            break;
-          case "text":
-          default:
-            output = `Title: ${page.title}\nURL: ${page.url}\n\nContent:\n${page.textContent.substring(0, 10000)}`;
-            if (page.textContent.length > 10000) {
-              output += "\n\n[Content truncated...]";
-            }
-            break;
+        let output = `# ${page.title}\n\n${page.markdown.substring(0, 15000)}`;
+        if (page.markdown.length > 15000) {
+          output += "\n\n[Content truncated...]";
         }
 
         return {
