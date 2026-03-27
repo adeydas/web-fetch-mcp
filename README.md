@@ -6,7 +6,7 @@ An MCP server for fetching and parsing webpages via [Flaresolverr](https://githu
 
 | Tool | Description |
 |------|-------------|
-| `render_webpage` | Fetches a page and returns text, HTML, or structured JSON |
+| `render_webpage` | Fetches a page and returns Markdown |
 | `extract_elements` | Extracts elements matching a CSS selector |
 
 ## Quick Start (Docker)
@@ -16,6 +16,14 @@ docker compose up -d
 ```
 
 MCP endpoint: `http://localhost:3000/mcp`
+
+### Rebuilding after code changes
+
+```bash
+docker compose up -d --build --force-recreate web-render-mcp
+```
+
+This rebuilds the image from source and restarts only the `web-render-mcp` container, leaving Flaresolverr untouched.
 
 ### MCP config
 
@@ -93,8 +101,7 @@ The HTTP transport exposes:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `url` | string | URL to fetch |
-| `format` | `text` \| `html` \| `json` | Output format (default: `text`) |
+| `url` | string | URL to fetch (protocol optional, defaults to `https://`) |
 
 ### `extract_elements`
 
