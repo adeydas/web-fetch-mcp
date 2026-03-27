@@ -15,19 +15,25 @@ const TRANSPORT = process.env.TRANSPORT || "stdio";
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const DEBUG = process.env.DEBUG === "true" || process.env.DEBUG === "1";
 
-function log(message: string, data?: Record<string, unknown>) {
-  if (!DEBUG) return;
+function fmt(level: string, message: string, data?: Record<string, unknown>) {
   const ts = new Date().toISOString();
   const extra = data ? " " + JSON.stringify(data) : "";
-  console.error(`[${ts}] ${message}${extra}`);
+  console.error(`[${ts}] [${level}] ${message}${extra}`);
 }
+
+function info(message: string, data?: Record<string, unknown>) { fmt("INFO", message, data); }
+function debug(message: string, data?: Record<string, unknown>) { if (DEBUG) fmt("DEBUG", message, data); }
+
+// keep backward-compat alias used throughout
+const log = debug;
 
 // ---------------------------------------------------------------------------
 // Flaresolverr
 // ---------------------------------------------------------------------------
 
 async function flaresolverrFetch(url: string): Promise<{ html: string; finalUrl: string }> {
-  log("Calling flaresolverr", { url, endpoint: FLARESOLVERR_URL });
+  info("Fetching URL", { url });
+  debug("Calling flaresolverr", { url, endpoint: FLARESOLVERR_URL });
   const resp = await fetch(`${FLARESOLVERR_URL}/v1`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -36,7 +42,8 @@ async function flaresolverrFetch(url: string): Promise<{ html: string; finalUrl:
   if (!resp.ok) throw new Error(`Flaresolverr returned HTTP ${resp.status}`);
   const data = await resp.json() as { status: string; message?: string; solution: { response: string; url: string } };
   if (data.status !== "ok") throw new Error(`Flaresolverr error: ${data.message}`);
-  log("Flaresolverr succeeded", { finalUrl: data.solution.url });
+  info("Fetch complete", { finalUrl: data.solution.url });
+  debug("Flaresolverr response", { finalUrl: data.solution.url });
   return { html: data.solution.response, finalUrl: data.solution.url };
 }
 
@@ -104,6 +111,7 @@ function createServer(): McpServer {
     },
     async ({ url }) => {
       try {
+        info("Tool called", { tool: "render_webpage", url });
         log("render_webpage called", { url });
         const { html, finalUrl } = await flaresolverrFetch(url);
         const page = parseHtml(html, finalUrl);
@@ -138,6 +146,7 @@ function createServer(): McpServer {
     },
     async ({ url, selector, extractType, attribute }) => {
       try {
+        info("Tool called", { tool: "extract_elements", url, selector, extractType });
         log("extract_elements called", { url, selector, extractType });
         const { html } = await flaresolverrFetch(url);
         const $ = cheerio.load(html);
@@ -194,29 +203,37 @@ async function startHttp() {
   // Session store: maps session ID -> { transport, server }
   const sessions = new Map<string, { transport: StreamableHTTPServerTransport; server: McpServer }>();
 
+  app.use((req: Request, _res: Response, next) => {
+    info("HTTP request", { method: req.method, path: req.path, sessionId: req.headers["mcp-session-id"] });
+    next();
+  });
+
   app.post("/mcp", async (req: Request, res: Response) => {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
-    log("POST /mcp", { sessionId, hasSession: sessionId ? sessions.has(sessionId) : false });
+    debug("POST /mcp", { sessionId, hasSession: sessionId ? sessions.has(sessionId) : false });
 
     if (sessionId && sessions.has(sessionId)) {
       await sessions.get(sessionId)!.transport.handleRequest(req, res);
       return;
     }
 
-    log("Creating new session");
+    info("Creating new session");
+    debug("Creating new session");
     const mcpServer = createServer();
 
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sid) => {
-        log("Session initialized", { sid });
+        info("Session initialized", { sid, activeSessions: sessions.size + 1 });
+        debug("Session initialized", { sid });
         sessions.set(sid, { transport, server: mcpServer });
       },
     });
 
     transport.onclose = () => {
       const sid = transport.sessionId;
-      log("Session closed", { sid });
+      info("Session closed", { sid, activeSessions: sessions.size - 1 });
+      debug("Session closed", { sid });
       if (sid) sessions.delete(sid);
     };
 
