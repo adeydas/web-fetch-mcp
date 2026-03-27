@@ -85,6 +85,11 @@ function parseHtml(html: string, finalUrl: string): PageContent {
 // MCP server factory
 // ---------------------------------------------------------------------------
 
+const urlSchema = z.preprocess(
+  (val) => typeof val === "string" && !/^https?:\/\//i.test(val) ? `https://${val}` : val,
+  z.url()
+);
+
 function createServer(): McpServer {
   const server = new McpServer({
     name: "web-render-mcp",
@@ -95,7 +100,7 @@ function createServer(): McpServer {
   server.tool(
     "render_webpage",
     {
-      url: z.string().url().describe("The URL of the webpage to render")
+      url: urlSchema.describe("The URL of the webpage to render")
     },
     async ({ url }) => {
       try {
@@ -113,6 +118,7 @@ function createServer(): McpServer {
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`[render_webpage] ${errorMessage}`, error instanceof Error ? error.stack : "");
         return {
           content: [{ type: "text", text: `Error rendering webpage: ${errorMessage}` }],
           isError: true
@@ -125,7 +131,7 @@ function createServer(): McpServer {
   server.tool(
     "extract_elements",
     {
-      url: z.string().url().describe("The URL of the webpage to extract elements from"),
+      url: urlSchema.describe("The URL of the webpage to extract elements from"),
       selector: z.string().describe("CSS selector for the elements to extract"),
       extractType: z.enum(["text", "html", "attribute"]).describe("What to extract: 'text' (inner text), 'html' (inner HTML), or 'attribute'"),
       attribute: z.string().optional().describe("Attribute name to extract (required when extractType is 'attribute')")
@@ -155,6 +161,7 @@ function createServer(): McpServer {
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`[extract_elements] ${errorMessage}`, error instanceof Error ? error.stack : "");
         return {
           content: [{ type: "text", text: `Error extracting elements: ${errorMessage}` }],
           isError: true
